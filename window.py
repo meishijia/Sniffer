@@ -4,9 +4,9 @@ import sys
 from queue import Queue
 from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtCore import QThread,pyqtSignal,Qt
-from PyQt5.QtGui import QIcon
+from PyQt5.QtGui import QIcon, QFont
 from PyQt5.QtWidgets import QApplication,QGridLayout,QWidget,QMainWindow,QAction,QVBoxLayout,QSplitter
-from PyQt5.QtWidgets import QTableWidget,QTableWidgetItem,QAbstractItemView,QTabWidget
+from PyQt5.QtWidgets import QTableWidget,QTableWidgetItem,QAbstractItemView,QTabWidget,QTextEdit
 #from multiprocessing import Manager,Process,Queue
 from time import sleep, time
 #from capture import *
@@ -15,28 +15,53 @@ import traceback
 from scapy.all import *
 
 global pkt_lst
+global count
+global pl
 
-class Table(QtWidgets.QTableWidget):
-    pass
 
 
-def fun_capture(iface,f_str):
-    global pkt_lst
-    print(iface,f_str)
-    try:
-        sniff(iface=self.iface,filter=self.f_str,prn=redirect)
-    except Exception as e:
-        traceback.print_exc()
-def fun_process():
-    global pkt_lst
-    while not pkt_lst.empty():
+class MyPacket():
+
+    def __init__(self,packet,num):
+
+        self.num = num
+        self.packet = packet
         try:
-            p = pkt_lst.get()
-            print(type(p))
-            print(p)
+            self.macSrc = packet.src
+            self.macDst = packet.dst
+            self.src = self.macSrc
+            self.dst = self.macDst
         except:
-            traceback.print_exc()
-            continue
+            pass
+        try:
+            self.ipSrc=packet[IP].src
+            self.ipDst=packet[IP].dst
+            self.src = self.ipSrc
+            self.dst = self.ipDst
+        except:
+            pass
+        try:
+            self.srcProt=str(packet[TCP].sport)
+            self.dstPort=str(packet[TCP].dport)
+        except:
+            pass
+        try:
+            self.srcPort=str(packet[UDP].sport)
+            self.dstPort=str(packet[UDP].dport)
+        except:
+            pass
+        self.time = time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(packet.time))
+        self.len = len(packet.original)
+        self.hex = packet.original.hex()
+        self.hierarchical = packet.show(dump=True)
+        if packet.haslayer("TCP"):
+            self.pro = "TCP"
+        elif packet.haslayer("UDP"):
+            self.pro = "UDP"
+        elif packet.haslayer("ICMP"):
+            self.pro = "ICMP"
+        elif packet.haslayer("ARP"):
+            self.pro = "ARP"
 
 
 class CaptureThread(QThread):
@@ -47,12 +72,7 @@ class CaptureThread(QThread):
         self.iface = iface
         self.f_str = f_str
         print("Init the capture thread")
-        #process = ProcessThread()
-        #process.start()
     def run(self):
-        if self.isRunning:
-            self.process = ProcessThread()
-            self.process.start()
         while self.isRunning:
             print("Capture thread is running")
             global pkt_lst
@@ -63,7 +83,6 @@ class CaptureThread(QThread):
                 traceback.print_exc()
     def stop(self):
         self.isRunning = False
-        self.process.stop()
 
 
 
@@ -81,24 +100,33 @@ class ProcessThread(QtCore.QThread):
         parse packet and display in table
         """
         print("Process thread is running")
-        num=0
+        #num=0
         global pkt_lst
-        print(pkt_lst.empty())
+        global pl
+        #print(pkt_lst.empty())
         while self.isRunning:
-            try:
-                p = pkt_lst.get()
-                print(type(p))
-                print(p)
-            except:
-                continue
-            # deal with packets
+            if not pkt_lst.empty():
+                try:
+                    p = pkt_lst.get()
+                    pl.append(p)
+                    l = [p.num,p.time,p.src,p.dst,p.len,p.pro]
+                    #print(l)
+                    self.AddPacket.emit(l)
+                    #print("The AddPacketSignal is emit")
+                except Exception as e:
+                    traceback.print_exc()
+                    continue
+                # deal with packets
     def stop(self):
         self.isRunning = False
 
 def redirect(packet):
     global pkt_lst
+    global count
+    count = count + 1
     #print(packet)
-    pkt_lst.put(packet)
+    pkt_lst.put(MyPacket(packet,count))
+    #print(packet.haslayer("ARP"))
 
 
 
@@ -112,7 +140,8 @@ class MyMainWindow(QMainWindow):
         stopAction = QAction(QIcon('stopbutton.png'),'Stop sniffing',self)
 
         startAction.triggered.connect(self.slotCapture)
-        stopAction.triggered.connect(self.slotProcess)
+        startAction.triggered.connect(self.slotProcess)
+        stopAction.triggered.connect(self.slotStopCap)
 
         self.toolBar = self.addToolBar('ToolBar')
         self.toolBar.addAction(startAction)
@@ -130,22 +159,44 @@ class MyMainWindow(QMainWindow):
 
     def slotCapture(self):
         print("Entered the slot of Capture")
+        global count
+        count = 0
+        global pl
+        pl = []
+        global pkt_lst
+        clear(pkt_lst)
+        while(self.centralWidget.tableWidget.rowCount() != 0):
+            self.centralWidget.tableWidget.removeRow(0)
         iface = self.centralWidget.comboBox.currentText()
         f_str = self.centralWidget.filterBar.text()
         self.capture = CaptureThread(iface,f_str)
+        self.centralWidget.tableWidget.clearContents()
         print("Begin to start the Capture thread")
         self.capture.start()
-    def slotStopCap(self,self.capture):
+    def slotStopCap(self):
         self.capture.stop()
-    """
+        self.process.stop()
+
     def slotProcess(self):
         print("Entered the slot of process")
         self.process = ProcessThread()
+        self.process.AddPacket.connect(self.AddPacketToTable)
         print("Begin to start the Process thread")
         self.process.start()
-    """
+
     def closeEvent(self,event):
         quit()
+    def AddPacketToTable(self,l):
+        #print("AddPacketToTable")
+        num = l[0]
+        rc = self.centralWidget.tableWidget.rowCount()
+        self.centralWidget.tableWidget.setRowCount(rc + 1)
+
+        for i in range(len(l)):
+            item = QTableWidgetItem(str(l[i]))
+            #print(l[i])
+            #print(item)
+            self.centralWidget.tableWidget.setItem(rc,i,item)
 
 
 
@@ -195,6 +246,7 @@ class MyCentralWidget(QWidget):
         ###### Packets List ######
 
         self.tableWidget = QTableWidget()
+        self.tableWidget.setFont(QFont("monospace",12));
         self.tableWidget.verticalHeader().setDefaultSectionSize(25)
         #self.tableWidget.horizontalHeader().setFont(QFont('Consolas', 11, QFont.Light))
         self.tableWidget.setSizeAdjustPolicy(QtWidgets.QAbstractScrollArea.AdjustToContents)
@@ -210,6 +262,10 @@ class MyCentralWidget(QWidget):
         self.tableWidget.setColumnWidth(4, 75)
         self.tableWidget.setColumnWidth(5, 90)
         self.tableWidget.setEditTriggers(QAbstractItemView.NoEditTriggers)
+
+        self.tableWidget.setSelectionBehavior(QTableWidget.SelectRows)
+        self.tableWidget.setSelectionMode(QTableWidget.SingleSelection)
+        self.tableWidget.itemSelectionChanged.connect(self.EvtSelect)
 
         ###### Frame Information ######
         self.tabWidget1 = QTabWidget()
@@ -233,21 +289,38 @@ class MyCentralWidget(QWidget):
 
         self.setLayout(self.vLayout)
 
+    def EvtSelect(self):
+        QtCore.QCoreApplication.processEvents()
+        for i in self.tableWidget.selectedItems():
+            row = i.row()
 
+        for i in range(self.tabWidget1.count()):
+            self.tabWidget1.removeTab(0)
+        for i in range(self.tabWidget2.count()):
+            self.tabWidget2.removeTab(0)
+        global pl
+        content = QTextEdit()
+        self.tabWidget1.addTab(content,"content")
+        content.setText(pl[row].hierarchical)
 
+        content_hex = QTextEdit()
+        self.tabWidget2.addTab(content_hex,"content hex")
+        content_hex.setText(pl[row].hex)
 
-
-#class MyPackageTable()
-
-
-
+def clear(queue):
+    while not queue.empty():
+        queue.get()
 
 import pdb
 #pdb.set_trace()
 def main():
 
+    global pl
+    pl = []
     global pkt_lst
     pkt_lst = Queue()
+    global count
+    count = 0
 
     app = QApplication(sys.argv)
     mainWindow = MyMainWindow()
@@ -257,3 +330,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

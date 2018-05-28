@@ -3,6 +3,7 @@ import dpkt
 from scapy.all import *
 import psutil
 import traceback
+import time
 
 def getIfaceList():
     netcard_info = []
@@ -45,6 +46,12 @@ def captureByPypcap(iface,f_str=''):
     for ts,pkt in sniff:
         print(ts)
         print(pkt)
+
+
+def ts2LocalTime(ts):
+    time_local = time.localtime(ts)
+    dt = time.strftime("%H:%M:%S",time_local)
+    return dt
 
 def main():
     getIfaceList()
